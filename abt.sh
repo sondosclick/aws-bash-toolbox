@@ -83,7 +83,7 @@ _abt_ctx_select() {
   local profiles regions current choice prof region
   current="${AWS_PROFILE}@${AWS_REGION}"
   profiles="$(_abt_profiles_list)"
-  regions="${AWSCTXF_REGIONS:-$(_abt_regions_list)}"
+  regions="$(_abt_regions_list)"
 
   choice=$( {
       while read -r prof; do
