@@ -3,14 +3,14 @@
 Toolkit para **Bash** que te da una experiencia estilo `kubectx/kubens` pero para AWS:
 
 - Contexto activo: `AWS_PROFILE` + `AWS_REGION` (persistente)
-- Cambiar rápido profile/región: `awsp`, `awsr`, `awsctx`, `awsctxf` (con `fzf`)
-- Listar instancias EC2 sin consola web: `ec2ls`
-- Conectar por **SSM Session Manager** sin SSH: `ssm`, `ssmfzf`
+- Cambiar rápido profile/región: `abt change ...` / `abt select context` (con `fzf`)
+- Listar instancias EC2 sin consola web: `abt list ec2`
+- Conectar por **SSM Session Manager** sin SSH: `abt connect ssm` / `abt select ssm`
 - Workaround para entornos corporativos: SSM ignora proxy/VPN **solo** cuando abre sesión
 
 Este repo incluye:
-- `awsctx.sh` → todas las funciones Bash (lo importante)
-- `install.sh` → instalador (añade `source .../awsctx.sh` a tu `~/.bashrc`)
+- `abt.sh` → todas las funciones Bash (lo importante)
+- `install.sh` → instalador (copia `abt.sh` a `~/.abt` y añade `source ~/.abt/abt.sh` a tu `~/.bashrc`)
 
 ---
 
@@ -143,10 +143,11 @@ source ~/.bashrc
 
 Qué hace `install.sh`:
 
+* copia `abt.sh` a `~/.abt/abt.sh`
 * añade en tu `~/.bashrc` una línea tipo:
 
 ```bash
-source "<RUTA_DEL_REPO>/awsctx.sh"
+source "$HOME/.abt/abt.sh"
 ```
 
 No sobrescribe tu bashrc y es seguro ejecutarlo varias veces.
@@ -159,15 +160,22 @@ No sobrescribe tu bashrc y es seguro ejecutarlo varias veces.
 git clone https://github.com/sondosclick/aws-bash-toolbox
 ```
 
-2. Edita tu `~/.bashrc` y añade al final:
+2. Copia `abt.sh` a `~/.abt`:
 
 ```bash
-source "$HOME/aws-bash-toolbox/awsctx.sh"
+mkdir -p "$HOME/.abt"
+cp abt.sh "$HOME/.abt/abt.sh"
+```
+
+3. Edita tu `~/.bashrc` y añade al final:
+
+```bash
+source "$HOME/.abt/abt.sh"
 ```
 
 > Ajusta el path si clonaste en otra ruta.
 
-3. Recarga:
+4. Recarga:
 
 ```bash
 source ~/.bashrc
@@ -177,54 +185,20 @@ source ~/.bashrc
 
 ## 4) Uso rápido
 
-### Ver contexto
+Formato: `abt <verbo> <objeto>`
 
 ```bash
-awsctx
-```
-
-### Cambiar profile (TAB)
-
-```bash
-awsp corp-uat-readonly
-```
-
-### Cambiar región (TAB)
-
-```bash
-awsr eu-west-3
-```
-
-### Selector interactivo profile@region
-
-```bash
-awsctxf
-```
-
-### Listar instancias EC2
-
-```bash
-ec2ls
-```
-
-### Conectar por SSM
-
-Por instance-id:
-
-```bash
-ssm i-0123456789abcdef0
-```
-
-Por tag Name:
-
-```bash
-ssm -n api-01
-```
-
-Selector interactivo:
-
-```bash
-ssmfzf
+abt show context
+abt change profile corp-uat-readonly
+abt change region eu-west-3
+abt change context corp-uat-readonly eu-west-3
+abt select context
+abt list ec2
+abt connect ssm i-0123456789abcdef0
+abt connect ssm -n api-01
+abt select ssm
+abt test sts
+abt test sts eu-west-3 eu-central-1
 ```
 
 ---
@@ -268,7 +242,7 @@ sudo apt install -y session-manager-plugin
 
 ---
 
-### No aparecen instancias en `ssmfzf`
+### No aparecen instancias en `abt select ssm`
 
 Revisa SSM Agent / permisos / conectividad. Chequeo:
 
@@ -283,6 +257,6 @@ aws ssm describe-instance-information \
 
 ## Archivos del repo
 
-* `awsctx.sh` → funciones Bash (toolbox)
+* `abt.sh` → funciones Bash (toolbox)
 * `install.sh` → instalador (modifica `~/.bashrc` añadiendo `source ...`)
 * `README.md` → documentación
