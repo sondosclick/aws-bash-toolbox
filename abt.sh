@@ -208,6 +208,17 @@ _abt_ec2_list() {
 
 _abt_test_sts() {
   local regions profiles fail profile region
+  local c_green c_red c_reset
+
+  if [ -t 1 ]; then
+    c_green=$'\033[0;32m'
+    c_red=$'\033[0;31m'
+    c_reset=$'\033[0m'
+  else
+    c_green=""
+    c_red=""
+    c_reset=""
+  fi
 
   profiles="$(_abt_profiles_list)"
   if [ -z "$profiles" ]; then
@@ -222,16 +233,16 @@ _abt_test_sts() {
   fi
 
   fail=0
+  printf "%-24s %-16s %-8s\n" "PROFILE" "REGION" "STATUS"
+  printf "%-24s %-16s %-8s\n" "------------------------" "----------------" "--------"
   for profile in $profiles; do
     for region in $regions; do
-      echo "==> profile=$profile region=$region"
-      if aws sts get-caller-identity --profile "$profile" --region "$region"; then
-        echo "OK"
+      if aws sts get-caller-identity --profile "$profile" --region "$region" >/dev/null 2>&1; then
+        printf "%-24s %-16s %b%-8s%b\n" "$profile" "$region" "$c_green" "OK" "$c_reset"
       else
-        echo "FAIL"
+        printf "%-24s %-16s %b%-8s%b\n" "$profile" "$region" "$c_red" "FAIL" "$c_reset"
         fail=1
       fi
-      echo ""
     done
   done
 
