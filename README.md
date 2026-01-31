@@ -317,3 +317,9 @@ aws ssm describe-instance-information \
 * `abt.sh` -> Bash functions (toolbox)
 * `install.sh` -> installer (adds `source ...` to `~/.bashrc`)
 * `README.md` -> documentation
+
+---
+
+## License
+
+GPL-3.0-only. See `LICENSE`.
