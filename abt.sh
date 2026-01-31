@@ -8,14 +8,31 @@
 # Configuration
 # ----------------------------
 
+ABT_VERSION="0.4.0-alpha"
+ABT_CONFIG_FILE="${HOME}/.abt/abt.env"
 AWSCTX_FILE="${HOME}/.aws/awsctx.env"
 
+_abt_config_load() {
+  if [ -f "$ABT_CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$ABT_CONFIG_FILE"
+  fi
+}
+
+_abt_config_load
+
 # Defaults if no persisted context exists
-: "${AWS_PROFILE:=corp-base}"
-: "${AWS_REGION:=eu-central-1}"
+: "${ABT_DEFAULT_PROFILE:=corp-base}"
+: "${ABT_DEFAULT_REGION:=eu-central-1}"
+: "${AWS_PROFILE:=$ABT_DEFAULT_PROFILE}"
+: "${AWS_REGION:=$ABT_DEFAULT_REGION}"
 
 # Regions shown in selectors (edit to taste)
 _abt_regions_list() {
+  if [ -n "${ABT_REGIONS:-}" ]; then
+    printf "%s\n" $ABT_REGIONS
+    return 0
+  fi
   cat <<'EOF'
 eu-central-1
 eu-west-1
@@ -23,6 +40,29 @@ eu-west-3
 us-east-1
 us-west-2
 EOF
+}
+
+_abt_config_init() {
+  local force=0
+  if [ "${1:-}" = "--force" ]; then
+    force=1
+  fi
+
+  mkdir -p "$(dirname "$ABT_CONFIG_FILE")"
+  if [ -f "$ABT_CONFIG_FILE" ] && [ "$force" -eq 0 ]; then
+    echo "Config already exists: $ABT_CONFIG_FILE"
+    echo "Use: abt config init --force"
+    return 1
+  fi
+
+  cat > "$ABT_CONFIG_FILE" <<'EOF'
+# abt configuration (shell)
+# ABT_DEFAULT_PROFILE="corp-base"
+# ABT_DEFAULT_REGION="eu-central-1"
+# ABT_REGIONS="eu-central-1 eu-west-1 eu-west-3 us-east-1 us-west-2"
+# ABT_COLOR=1
+EOF
+  echo "Wrote $ABT_CONFIG_FILE"
 }
 
 # ----------------------------
@@ -54,7 +94,13 @@ _abt_ctx_show() {
 
 # List profiles from ~/.aws/config
 _abt_profiles_list() {
+  [ -f ~/.aws/config ] || return 0
   awk '/^\[profile /{gsub(/^\[profile /,""); gsub(/\]$/,""); print}' ~/.aws/config | sort
+}
+
+_abt_sso_sessions_list() {
+  [ -f ~/.aws/config ] || return 0
+  awk '/^\[sso-session /{gsub(/^\[sso-session /,""); gsub(/\]$/,""); print}' ~/.aws/config | sort
 }
 
 # Switch profile
@@ -73,6 +119,17 @@ _abt_change_region() {
   _abt_ctx_show
 }
 
+# Switch context
+_abt_change_context() {
+  [ -z "$1" ] && { echo "Usage: abt change context <profile> [region]"; return 1; }
+  export AWS_PROFILE="$1"
+  if [ -n "${2:-}" ]; then
+    export AWS_REGION="$2"
+  fi
+  _abt_ctx_save
+  _abt_ctx_show
+}
+
 # ----------------------------
 # Interactive context selector (fzf) (internal)
 # ----------------------------
@@ -84,6 +141,11 @@ _abt_ctx_select() {
   current="${AWS_PROFILE}@${AWS_REGION}"
   profiles="$(_abt_profiles_list)"
   regions="$(_abt_regions_list)"
+
+  if [ -z "$profiles" ]; then
+    echo "No profiles found in ~/.aws/config"
+    return 1
+  fi
 
   choice=$( {
       while read -r prof; do
@@ -108,12 +170,93 @@ _abt_ctx_select() {
   _abt_ctx_show
 }
 
+# Select profile only (fzf)
+_abt_profile_select() {
+  command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
+
+  local profiles choice
+  profiles="$(_abt_profiles_list)"
+  if [ -z "$profiles" ]; then
+    echo "No profiles found in ~/.aws/config"
+    return 1
+  fi
+
+  choice=$(printf "%s\n" $profiles | fzf --prompt="AWS Profile > " --reverse --height=20)
+  [ -z "$choice" ] && return 0
+
+  export AWS_PROFILE="$choice"
+  _abt_ctx_save
+  _abt_ctx_show
+}
+
+# Select region only (fzf)
+_abt_region_select() {
+  command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
+
+  local regions choice
+  regions="$(_abt_regions_list)"
+  if [ -z "$regions" ]; then
+    echo "No regions configured"
+    return 1
+  fi
+
+  choice=$(printf "%s\n" $regions | fzf --prompt="AWS Region > " --reverse --height=20)
+  [ -z "$choice" ] && return 0
+
+  export AWS_REGION="$choice"
+  _abt_ctx_save
+  _abt_ctx_show
+}
+
 # ----------------------------
 # AWS command wrapper (internal)
 # ----------------------------
 
 _abt_cmd() {
   aws --profile "$AWS_PROFILE" --region "$AWS_REGION" "$@"
+}
+
+# ----------------------------
+# Show / export helpers (internal)
+# ----------------------------
+
+_abt_show_profile() {
+  echo "$AWS_PROFILE"
+}
+
+_abt_show_region() {
+  echo "$AWS_REGION"
+}
+
+_abt_show_identity() {
+  _abt_cmd sts get-caller-identity
+}
+
+_abt_show_version() {
+  echo "abt $ABT_VERSION"
+}
+
+_abt_show_config() {
+  if [ -f "$ABT_CONFIG_FILE" ]; then
+    cat "$ABT_CONFIG_FILE"
+  else
+    echo "Config not found: $ABT_CONFIG_FILE"
+    return 1
+  fi
+}
+
+_abt_export_context() {
+  echo "export AWS_PROFILE='${AWS_PROFILE}'"
+  echo "export AWS_REGION='${AWS_REGION}'"
+}
+
+_abt_sso_login() {
+  local session="${1:-}"
+  if [ -n "$session" ]; then
+    aws sso login --sso-session "$session"
+  else
+    aws sso login --profile "$AWS_PROFILE"
+  fi
 }
 
 # ----------------------------
@@ -124,15 +267,29 @@ _abt_usage() {
   cat <<'EOF'
 Usage:
   abt show context
+  abt show profile
+  abt show region
+  abt show identity
+  abt show version
+  abt show config
+  abt export context
+  abt list profiles
+  abt list regions
   abt change profile <profile>
   abt change region <region>
-  abt change context <profile> <region>
+  abt change context <profile> [region]
   abt select context
+  abt select profile
+  abt select region
   abt list ec2
   abt connect ssm <instance-id>
   abt connect ssm -n <NameTag>
   abt select ssm
+  abt sso login [session]
   abt test sts [region...]
+  abt test doctor
+  abt config init [--force]
+  abt config show
   abt help
 EOF
 }
@@ -157,6 +314,30 @@ abt() {
     show:context)
       _abt_ctx_show
       ;;
+    show:profile)
+      _abt_show_profile
+      ;;
+    show:region)
+      _abt_show_region
+      ;;
+    show:identity)
+      _abt_show_identity
+      ;;
+    show:version)
+      _abt_show_version
+      ;;
+    show:config)
+      _abt_show_config
+      ;;
+    export:context)
+      _abt_export_context
+      ;;
+    list:profiles)
+      _abt_profiles_list
+      ;;
+    list:regions)
+      _abt_regions_list
+      ;;
     change:profile)
       _abt_change_profile "$@"
       ;;
@@ -164,14 +345,16 @@ abt() {
       _abt_change_region "$@"
       ;;
     change:context)
-      [ -z "${1:-}" ] || [ -z "${2:-}" ] && { echo "Usage: abt change context <profile> <region>"; return 1; }
-      export AWS_PROFILE="$1"
-      export AWS_REGION="$2"
-      _abt_ctx_save
-      _abt_ctx_show
+      _abt_change_context "$@"
       ;;
     select:context)
       _abt_ctx_select
+      ;;
+    select:profile)
+      _abt_profile_select
+      ;;
+    select:region)
+      _abt_region_select
       ;;
     list:ec2)
       _abt_ec2_list
@@ -179,11 +362,23 @@ abt() {
     test:sts)
       _abt_test_sts "$@"
       ;;
+    test:doctor)
+      _abt_doctor
+      ;;
     connect:ssm)
       _abt_ssm_connect "$@"
       ;;
     select:ssm)
       _abt_ssm_select
+      ;;
+    sso:login)
+      _abt_sso_login "$@"
+      ;;
+    config:init)
+      _abt_config_init "$@"
+      ;;
+    config:show)
+      _abt_show_config
       ;;
     *)
       _abt_usage
@@ -206,11 +401,15 @@ _abt_ec2_list() {
 # Tests (internal)
 # ----------------------------
 
+_abt_color_enabled() {
+  [ -t 1 ] && [ "${ABT_COLOR:-1}" != "0" ]
+}
+
 _abt_test_sts() {
   local regions profiles fail profile region
   local c_green c_red c_reset
 
-  if [ -t 1 ]; then
+  if _abt_color_enabled; then
     c_green=$'\033[0;32m'
     c_red=$'\033[0;31m'
     c_reset=$'\033[0m'
@@ -245,6 +444,50 @@ _abt_test_sts() {
       fi
     done
   done
+
+  return "$fail"
+}
+
+_abt_doctor_check() {
+  local _fail_ref="$1"
+  local cmd="$2"
+  local label="$3"
+  local required="${4:-yes}"
+
+  if command -v "$cmd" >/dev/null 2>&1; then
+    printf "OK   %s\n" "$label"
+  else
+    if [ "$required" = "yes" ]; then
+      printf "FAIL %s (missing: %s)\n" "$label" "$cmd"
+      eval "$_fail_ref=1"
+    else
+      printf "WARN %s (missing: %s)\n" "$label" "$cmd"
+    fi
+  fi
+}
+
+_abt_doctor() {
+  local fail=0
+
+  _abt_doctor_check fail "aws" "AWS CLI" "yes"
+  _abt_doctor_check fail "session-manager-plugin" "SSM Session Manager plugin" "yes"
+  _abt_doctor_check fail "fzf" "fzf (optional)" "no"
+
+  if [ -f ~/.aws/config ]; then
+    if [ -n "$(_abt_profiles_list)" ]; then
+      printf "OK   AWS profiles found\n"
+    else
+      printf "WARN AWS profiles not found in ~/.aws/config\n"
+    fi
+  else
+    printf "WARN ~/.aws/config not found\n"
+  fi
+
+  if [ -f "$ABT_CONFIG_FILE" ]; then
+    printf "OK   abt config found (%s)\n" "$ABT_CONFIG_FILE"
+  else
+    printf "WARN abt config not found (%s)\n" "$ABT_CONFIG_FILE"
+  fi
 
   return "$fail"
 }
@@ -302,29 +545,38 @@ _abt_complete() {
   local obj="${COMP_WORDS[2]}"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=($(compgen -W "show change list connect select test help" -- "$cur"))
+    COMPREPLY=($(compgen -W "show change list connect select test sso export config help" -- "$cur"))
     return 0
   fi
 
   if [ "$COMP_CWORD" -eq 2 ]; then
     case "$verb" in
       show)
-        COMPREPLY=($(compgen -W "context" -- "$cur"))
+        COMPREPLY=($(compgen -W "context profile region identity version config" -- "$cur"))
         ;;
       select)
-        COMPREPLY=($(compgen -W "context ssm" -- "$cur"))
+        COMPREPLY=($(compgen -W "context profile region ssm" -- "$cur"))
         ;;
       change)
         COMPREPLY=($(compgen -W "profile region context" -- "$cur"))
         ;;
       list)
-        COMPREPLY=($(compgen -W "ec2" -- "$cur"))
+        COMPREPLY=($(compgen -W "ec2 profiles regions" -- "$cur"))
         ;;
       test)
-        COMPREPLY=($(compgen -W "sts" -- "$cur"))
+        COMPREPLY=($(compgen -W "sts doctor" -- "$cur"))
         ;;
       connect)
         COMPREPLY=($(compgen -W "ssm" -- "$cur"))
+        ;;
+      sso)
+        COMPREPLY=($(compgen -W "login" -- "$cur"))
+        ;;
+      export)
+        COMPREPLY=($(compgen -W "context" -- "$cur"))
+        ;;
+      config)
+        COMPREPLY=($(compgen -W "init show" -- "$cur"))
         ;;
       *)
         COMPREPLY=()
@@ -352,6 +604,26 @@ _abt_complete() {
       COMPREPLY=($(compgen -W "$(_abt_regions_list)" -- "$cur"))
       return 0
     fi
+  fi
+
+  if [ "$verb" = "select" ] && [ "$obj" = "profile" ] && [ "$COMP_CWORD" -eq 3 ]; then
+    COMPREPLY=($(compgen -W "$(_abt_profiles_list)" -- "$cur"))
+    return 0
+  fi
+
+  if [ "$verb" = "select" ] && [ "$obj" = "region" ] && [ "$COMP_CWORD" -eq 3 ]; then
+    COMPREPLY=($(compgen -W "$(_abt_regions_list)" -- "$cur"))
+    return 0
+  fi
+
+  if [ "$verb" = "sso" ] && [ "$obj" = "login" ] && [ "$COMP_CWORD" -eq 3 ]; then
+    COMPREPLY=($(compgen -W "$(_abt_sso_sessions_list)" -- "$cur"))
+    return 0
+  fi
+
+  if [ "$verb" = "config" ] && [ "$obj" = "init" ] && [ "$COMP_CWORD" -eq 3 ]; then
+    COMPREPLY=($(compgen -W "--force" -- "$cur"))
+    return 0
   fi
 }
 complete -F _abt_complete abt

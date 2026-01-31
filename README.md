@@ -7,6 +7,7 @@ Toolkit para **Bash** que te da una experiencia estilo `kubectx/kubens` pero par
 - Listar instancias EC2 sin consola web: `abt list ec2`
 - Conectar por **SSM Session Manager** sin SSH: `abt connect ssm` / `abt select ssm`
 - Workaround para entornos corporativos: SSM ignora proxy/VPN **solo** cuando abre sesión
+- Utilidades: `abt list profiles/regions`, `abt show identity`, `abt test doctor`, `abt sso login`
 
 Este repo incluye:
 - `abt.sh` → todas las funciones Bash (lo importante)
@@ -183,22 +184,72 @@ source ~/.bashrc
 
 ---
 
-## 4) Uso rápido
+## 4) Configuración opcional (abt)
+
+El toolbox puede leer un archivo opcional: `~/.abt/abt.env` (formato shell).
+
+Crear plantilla:
+
+```bash
+abt config init
+```
+
+Forzar overwrite:
+
+```bash
+abt config init --force
+```
+
+Variables disponibles (ejemplo):
+
+```bash
+ABT_DEFAULT_PROFILE="corp-base"
+ABT_DEFAULT_REGION="eu-central-1"
+ABT_REGIONS="eu-central-1 eu-west-1 eu-west-3 us-east-1 us-west-2"
+ABT_COLOR=1
+```
+
+- `ABT_DEFAULT_*`: se usan si no hay contexto persistido.
+- `ABT_REGIONS`: lista usada por los selectores.
+- `ABT_COLOR=0`: desactiva colores en la salida.
+
+Ver config actual:
+
+```bash
+abt show config
+```
+
+---
+
+## 5) Uso rápido
 
 Formato: `abt <verbo> <objeto>`
 
 ```bash
 abt show context
+abt show profile
+abt show region
+abt show identity
+abt show version
+abt export context
+abt list profiles
+abt list regions
 abt change profile corp-uat-readonly
 abt change region eu-west-3
 abt change context corp-uat-readonly eu-west-3
 abt select context
+abt select profile
+abt select region
 abt list ec2
 abt connect ssm i-0123456789abcdef0
 abt connect ssm -n api-01
 abt select ssm
+abt sso login
 abt test sts
 abt test sts eu-west-3 eu-central-1
+abt test doctor
+abt config init
+abt show config
 ```
 
 ---
