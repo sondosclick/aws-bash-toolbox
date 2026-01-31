@@ -33,7 +33,7 @@ chmod +x "$ABT_FILE"
 
 # Check bashrc exists
 if [ ! -f "$BASHRC" ]; then
-  info "~/.bashrc not found, creating it"
+  info "$BASHRC not found, creating it"
   touch "$BASHRC"
 fi
 
