@@ -30,7 +30,9 @@ _abt_config_load
 # Regions shown in selectors (edit to taste)
 _abt_regions_list() {
   if [ -n "${ABT_REGIONS:-}" ]; then
-    printf "%s\n" $ABT_REGIONS
+    local -a regions
+    read -r -a regions <<< "$ABT_REGIONS"
+    printf "%s\n" "${regions[@]}"
     return 0
   fi
   cat <<'EOF'
@@ -181,7 +183,7 @@ _abt_profile_select() {
     return 1
   fi
 
-  choice=$(printf "%s\n" $profiles | fzf --prompt="AWS Profile > " --reverse --height=20)
+  choice=$(printf "%s\n" "$profiles" | fzf --prompt="AWS Profile > " --reverse --height=20)
   [ -z "$choice" ] && return 0
 
   export AWS_PROFILE="$choice"
@@ -200,7 +202,7 @@ _abt_region_select() {
     return 1
   fi
 
-  choice=$(printf "%s\n" $regions | fzf --prompt="AWS Region > " --reverse --height=20)
+  choice=$(printf "%s\n" "$regions" | fzf --prompt="AWS Region > " --reverse --height=20)
   [ -z "$choice" ] && return 0
 
   export AWS_REGION="$choice"
@@ -393,7 +395,7 @@ abt() {
 
 _abt_ec2_list() {
   _abt_cmd ec2 describe-instances \
-    --query 'Reservations[].Instances[].{Name: Tags[?Key==`Name`]|[0].Value, InstanceId: InstanceId, PrivateIP: PrivateIpAddress, State: State.Name}' \
+    --query "Reservations[].Instances[].{Name: Tags[?Key==\`Name\`]|[0].Value, InstanceId: InstanceId, PrivateIP: PrivateIpAddress, State: State.Name}" \
     --output table
 }
 
@@ -525,7 +527,7 @@ _abt_ssm_select() {
 
   local id
   id=$(_abt_cmd ec2 describe-instances \
-      --query 'Reservations[].Instances[].[InstanceId, Tags[?Key==`Name`]|[0].Value, PrivateIpAddress, State.Name]' \
+      --query "Reservations[].Instances[].[InstanceId, Tags[?Key==\`Name\`]|[0].Value, PrivateIpAddress, State.Name]" \
       --output text \
     | awk '$4=="running"{print $0}' \
     | fzf --prompt="SSM (${AWS_PROFILE}@${AWS_REGION})> " \
@@ -539,44 +541,50 @@ _abt_ssm_select() {
 # Bash completion
 # ----------------------------
 
+_abt_complete_words() {
+  local words="$1"
+  local cur="$2"
+  mapfile -t COMPREPLY < <(compgen -W "$words" -- "$cur")
+}
+
 _abt_complete() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local verb="${COMP_WORDS[1]}"
   local obj="${COMP_WORDS[2]}"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=($(compgen -W "show change list connect select test sso export config help" -- "$cur"))
+    _abt_complete_words "show change list connect select test sso export config help" "$cur"
     return 0
   fi
 
   if [ "$COMP_CWORD" -eq 2 ]; then
     case "$verb" in
       show)
-        COMPREPLY=($(compgen -W "context profile region identity version config" -- "$cur"))
+        _abt_complete_words "context profile region identity version config" "$cur"
         ;;
       select)
-        COMPREPLY=($(compgen -W "context profile region ssm" -- "$cur"))
+        _abt_complete_words "context profile region ssm" "$cur"
         ;;
       change)
-        COMPREPLY=($(compgen -W "profile region context" -- "$cur"))
+        _abt_complete_words "profile region context" "$cur"
         ;;
       list)
-        COMPREPLY=($(compgen -W "ec2 profiles regions" -- "$cur"))
+        _abt_complete_words "ec2 profiles regions" "$cur"
         ;;
       test)
-        COMPREPLY=($(compgen -W "sts doctor" -- "$cur"))
+        _abt_complete_words "sts doctor" "$cur"
         ;;
       connect)
-        COMPREPLY=($(compgen -W "ssm" -- "$cur"))
+        _abt_complete_words "ssm" "$cur"
         ;;
       sso)
-        COMPREPLY=($(compgen -W "login" -- "$cur"))
+        _abt_complete_words "login" "$cur"
         ;;
       export)
-        COMPREPLY=($(compgen -W "context" -- "$cur"))
+        _abt_complete_words "context" "$cur"
         ;;
       config)
-        COMPREPLY=($(compgen -W "init show" -- "$cur"))
+        _abt_complete_words "init show" "$cur"
         ;;
       *)
         COMPREPLY=()
@@ -586,43 +594,43 @@ _abt_complete() {
   fi
 
   if [ "$verb" = "change" ] && [ "$obj" = "profile" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    COMPREPLY=($(compgen -W "$(_abt_profiles_list)" -- "$cur"))
+    _abt_complete_words "$(_abt_profiles_list)" "$cur"
     return 0
   fi
 
   if [ "$verb" = "change" ] && [ "$obj" = "region" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    COMPREPLY=($(compgen -W "$(_abt_regions_list)" -- "$cur"))
+    _abt_complete_words "$(_abt_regions_list)" "$cur"
     return 0
   fi
 
   if [ "$verb" = "change" ] && [ "$obj" = "context" ]; then
     if [ "$COMP_CWORD" -eq 3 ]; then
-      COMPREPLY=($(compgen -W "$(_abt_profiles_list)" -- "$cur"))
+      _abt_complete_words "$(_abt_profiles_list)" "$cur"
       return 0
     fi
     if [ "$COMP_CWORD" -eq 4 ]; then
-      COMPREPLY=($(compgen -W "$(_abt_regions_list)" -- "$cur"))
+      _abt_complete_words "$(_abt_regions_list)" "$cur"
       return 0
     fi
   fi
 
   if [ "$verb" = "select" ] && [ "$obj" = "profile" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    COMPREPLY=($(compgen -W "$(_abt_profiles_list)" -- "$cur"))
+    _abt_complete_words "$(_abt_profiles_list)" "$cur"
     return 0
   fi
 
   if [ "$verb" = "select" ] && [ "$obj" = "region" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    COMPREPLY=($(compgen -W "$(_abt_regions_list)" -- "$cur"))
+    _abt_complete_words "$(_abt_regions_list)" "$cur"
     return 0
   fi
 
   if [ "$verb" = "sso" ] && [ "$obj" = "login" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    COMPREPLY=($(compgen -W "$(_abt_sso_sessions_list)" -- "$cur"))
+    _abt_complete_words "$(_abt_sso_sessions_list)" "$cur"
     return 0
   fi
 
   if [ "$verb" = "config" ] && [ "$obj" = "init" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    COMPREPLY=($(compgen -W "--force" -- "$cur"))
+    _abt_complete_words "--force" "$cur"
     return 0
   fi
 }
