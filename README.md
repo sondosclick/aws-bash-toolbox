@@ -1,85 +1,87 @@
 # aws-bash-toolbox (AWS CLI + SSO + SSM) 🧰
 
-Toolkit para **Bash** que te da una experiencia estilo `kubectx/kubens` pero para AWS:
+Status: **alpha** (breaking changes are allowed).
 
-- Contexto activo: `AWS_PROFILE` + `AWS_REGION` (persistente)
-- Cambiar rápido profile/región: `abt change ...` / `abt select context` (con `fzf`)
-- Listar instancias EC2 sin consola web: `abt list ec2`
-- Conectar por **SSM Session Manager** sin SSH: `abt connect ssm` / `abt select ssm`
-- Workaround para entornos corporativos: SSM ignora proxy/VPN **solo** cuando abre sesión
-- Utilidades: `abt list profiles/regions`, `abt show identity`, `abt test doctor`, `abt sso login`
+A **Bash** toolkit that gives you a `kubectx/kubens`-style workflow for AWS:
 
-Este repo incluye:
-- `abt.sh` → todas las funciones Bash (lo importante)
-- `install.sh` → instalador (copia `abt.sh` a `~/.abt` y añade `source ~/.abt/abt.sh` a tu `~/.bashrc`)
+- Active context: persistent `AWS_PROFILE` + `AWS_REGION`
+- Fast switching: `abt change ...` / `abt select context` (with `fzf`)
+- EC2 listing without the console: `abt list ec2`
+- SSM Session Manager connect: `abt connect ssm` / `abt select ssm`
+- Corporate VPN/proxy workaround: SSM ignores proxy only during sessions
+- Utilities: `abt list profiles/regions`, `abt show identity`, `abt test doctor`, `abt sso login`
+
+This repo includes:
+- `abt.sh` -> all Bash functions (the toolbox)
+- `install.sh` -> installer (copies `abt.sh` to `~/.abt` and sources it from `~/.bashrc`)
 
 ---
 
-## Requisitos
+## Requirements
 
-- Ubuntu 24.04
+- Linux (tested on Ubuntu 24.04)
 - Bash
 - AWS CLI v2
-- Acceso por IAM Identity Center (SSO)
+- IAM Identity Center (SSO) access
 
-Instala dependencias:
+Install dependencies:
 
 ```bash
 sudo apt update
 sudo apt install -y fzf session-manager-plugin
 ```
 
-Comprueba:
+Verify:
 
 ```bash
-aws --version         # debe ser aws-cli/2.x
+aws --version         # should be aws-cli/2.x
 session-manager-plugin
 ```
 
 ---
 
-## Convención de perfiles (recomendada)
+## Profile naming convention (recommended)
 
-Usamos:
+We use:
 
 **`corp-<env>-<role>`**
 
-Ejemplos:
+Examples:
 
 * `corp-dev-readonly`
 * `corp-uat-admin`
 * `corp-pro-support`
 
-Donde:
+Where:
 
-* `<env>`: entorno objetivo (por ejemplo: `dev`, `uat`, `pro`)
-* `<role>`: permission set o rol en IAM Identity Center (por ejemplo: `admin`, `readonly`, `support`)
+* `<env>`: target environment (e.g., `dev`, `uat`, `pro`)
+* `<role>`: permission set / role in IAM Identity Center (e.g., `admin`, `readonly`, `support`)
 
-> Si vuestro equipo usa otros names (`sandbox`, `np`, `prod`, etc.), se puede adaptar.
-> Lo importante es que el naming sea consistente.
+> If your team uses other names (`sandbox`, `np`, `prod`, etc.), adjust as needed.
+> The important part is consistency.
 
 ---
 
-## 1) Configurar AWS SSO (perfiles)
+## 1) Configure AWS SSO (profiles)
 
-Este toolbox asume perfiles AWS basados en SSO en `~/.aws/config`.
+This toolbox assumes AWS SSO profiles in `~/.aws/config`.
 
-### 1.1 Crear/validar la sesión SSO
+### 1.1 Create/validate the SSO session
 
-En `~/.aws/config`:
+In `~/.aws/config`:
 
 ```ini
 [sso-session corp-sso]
-sso_start_url = https://<TU_START_URL>/start
+sso_start_url = https://<YOUR_START_URL>/start
 sso_region = eu-central-1
 sso_registration_scopes = sso:account:access
 ```
 
-**Importante**: usa el Start URL sin `/#/` para evitar problemas de token/caché.
+Important: use the Start URL **without** `/#/` to avoid token/cache issues.
 
-### 1.2 Crear perfiles por cuenta y role (permission set)
+### 1.2 Create profiles per account and role (permission set)
 
-Ejemplos completos:
+Full examples:
 
 ```ini
 [profile corp-dev-admin]
@@ -104,14 +106,14 @@ region = eu-west-3
 output = json
 ```
 
-> Nota: en SSO lo correcto es `sso_session + sso_account_id + sso_role_name`.
-> Evita `source_profile + role_arn` (AssumeRole clásico), salvo que tu organización lo requiera expresamente.
+Note: for SSO the correct pattern is `sso_session + sso_account_id + sso_role_name`.
+Avoid `source_profile + role_arn` unless your org explicitly requires classic AssumeRole.
 
 ---
 
-## 2) Login SSO
+## 2) SSO login
 
-Si has tocado perfiles o tuviste errores:
+If you changed profiles or saw errors:
 
 ```bash
 rm -rf ~/.aws/sso/cache/*
@@ -123,7 +125,7 @@ Login:
 aws sso login --sso-session corp-sso
 ```
 
-Verifica:
+Verify:
 
 ```bash
 aws sts get-caller-identity --profile corp-dev-admin --region eu-west-3
@@ -131,9 +133,9 @@ aws sts get-caller-identity --profile corp-dev-admin --region eu-west-3
 
 ---
 
-## 3) Instalación del toolbox
+## 3) Install the toolbox
 
-### Método A) Instalación automática (recomendada)
+### Method A) Automated install (recommended)
 
 ```bash
 git clone https://github.com/sondosclick/aws-bash-toolbox
@@ -142,41 +144,39 @@ cd aws-bash-toolbox
 source ~/.bashrc
 ```
 
-Qué hace `install.sh`:
+What `install.sh` does:
 
-* copia `abt.sh` a `~/.abt/abt.sh`
-* añade en tu `~/.bashrc` una línea tipo:
+* copies `abt.sh` to `~/.abt/abt.sh`
+* adds a line to `~/.bashrc`:
 
 ```bash
 source "$HOME/.abt/abt.sh"
 ```
 
-No sobrescribe tu bashrc y es seguro ejecutarlo varias veces.
+It does not overwrite your bashrc and is safe to run multiple times.
 
-### Método B) Manual (copiar y pegar)
+### Method B) Manual (copy/paste)
 
-1. Clona el repo:
+1. Clone the repo:
 
 ```bash
 git clone https://github.com/sondosclick/aws-bash-toolbox
 ```
 
-2. Copia `abt.sh` a `~/.abt`:
+2. Copy `abt.sh` to `~/.abt`:
 
 ```bash
 mkdir -p "$HOME/.abt"
 cp abt.sh "$HOME/.abt/abt.sh"
 ```
 
-3. Edita tu `~/.bashrc` y añade al final:
+3. Edit your `~/.bashrc` and add at the end:
 
 ```bash
 source "$HOME/.abt/abt.sh"
 ```
 
-> Ajusta el path si clonaste en otra ruta.
-
-4. Recarga:
+4. Reload:
 
 ```bash
 source ~/.bashrc
@@ -184,23 +184,23 @@ source ~/.bashrc
 
 ---
 
-## 4) Configuración opcional (abt)
+## 4) Optional configuration (abt)
 
-El toolbox puede leer un archivo opcional: `~/.abt/abt.env` (formato shell).
+The toolbox can read an optional file: `~/.abt/abt.env` (shell format).
 
-Crear plantilla:
+Create a template:
 
 ```bash
 abt config init
 ```
 
-Forzar overwrite:
+Force overwrite:
 
 ```bash
 abt config init --force
 ```
 
-Variables disponibles (ejemplo):
+Available variables (example):
 
 ```bash
 ABT_DEFAULT_PROFILE="corp-base"
@@ -209,11 +209,11 @@ ABT_REGIONS="eu-central-1 eu-west-1 eu-west-3 us-east-1 us-west-2"
 ABT_COLOR=1
 ```
 
-- `ABT_DEFAULT_*`: se usan si no hay contexto persistido.
-- `ABT_REGIONS`: lista usada por los selectores.
-- `ABT_COLOR=0`: desactiva colores en la salida.
+- `ABT_DEFAULT_*`: used when no persisted context exists.
+- `ABT_REGIONS`: space-separated list used by selectors.
+- `ABT_COLOR=0`: disables colored output.
 
-Ver config actual:
+Show current config:
 
 ```bash
 abt show config
@@ -221,9 +221,9 @@ abt show config
 
 ---
 
-## 5) Uso rápido
+## 5) Quick usage
 
-Formato: `abt <verbo> <objeto>`
+Format: `abt <verb> <object>`
 
 ```bash
 abt show context
@@ -252,29 +252,35 @@ abt config init
 abt show config
 ```
 
+Tip: `abt export context` is handy for scripts:
+
+```bash
+source <(abt export context)
+```
+
 ---
 
 ## FAQ
 
-### “Error loading SSO Token: Token for <start_url> does not exist”
+### "Error loading SSO Token: Token for <start_url> does not exist"
 
-Solución:
+Fix:
 
 ```bash
 rm -rf ~/.aws/sso/cache/*
 aws sso login --sso-session corp-sso
 ```
 
-Verifica que tus perfiles usan `sso_session = corp-sso`.
+Verify your profiles use `sso_session = corp-sso`.
 
 ---
 
 ### `Cannot perform start session: EOF`
 
-Suele ser proxy/VPN corporativo. El toolbox ejecuta SSM ignorando proxy solo en SSM, pero si sigue:
+Likely corporate proxy/VPN. This toolbox ignores proxy only for SSM, but if it still fails:
 
-* prueba sin VPN / otra red (si puedes)
-* revisa proxy:
+* try without VPN / another network (if possible)
+* inspect proxy env:
 
 ```bash
 env | grep -i proxy
@@ -284,7 +290,7 @@ env | grep -i proxy
 
 ### `session-manager-plugin: command not found`
 
-Instala:
+Install:
 
 ```bash
 sudo apt update
@@ -293,9 +299,9 @@ sudo apt install -y session-manager-plugin
 
 ---
 
-### No aparecen instancias en `abt select ssm`
+### No instances show up in `abt select ssm`
 
-Revisa SSM Agent / permisos / conectividad. Chequeo:
+Check SSM Agent / permissions / connectivity:
 
 ```bash
 aws ssm describe-instance-information \
@@ -306,8 +312,8 @@ aws ssm describe-instance-information \
 
 ---
 
-## Archivos del repo
+## Repo files
 
-* `abt.sh` → funciones Bash (toolbox)
-* `install.sh` → instalador (modifica `~/.bashrc` añadiendo `source ...`)
-* `README.md` → documentación
+* `abt.sh` -> Bash functions (toolbox)
+* `install.sh` -> installer (adds `source ...` to `~/.bashrc`)
+* `README.md` -> documentation
