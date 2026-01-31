@@ -109,6 +109,60 @@ output = json
 Note: for SSO the correct pattern is `sso_session + sso_account_id + sso_role_name`.
 Avoid `source_profile + role_arn` unless your org explicitly requires classic AssumeRole.
 
+### 1.3 Optional: assume an extra role after SSO login (SSM full access)
+
+If your org requires a **second role** after SSO (common for elevated access),
+create a **chained profile** that uses `source_profile` and `role_arn`.
+
+Example: assume a custom SSM full-access role **after** logging in with an
+existing SSO profile that ends in `assumerole`:
+
+```ini
+[profile corp-br-np-assumerole]
+sso_session = corp-sso
+sso_account_id = 418272778142
+sso_role_name = AssumeRole
+region = eu-west-3
+output = json
+
+[profile corp-br-np-ssmfullaccess]
+role_arn = arn:aws:iam::418272778142:role/ssmfullcaccess
+source_profile = corp-br-np-assumerole
+role_session_name = your-user
+region = eu-west-3
+```
+
+ASCII flow:
+
+```
+You
+  │
+  ├─(SSO login)─> corp-br-np-assumerole
+  │                (Identity Center permission set)
+  │
+  └─(AssumeRole)→ corp-br-np-ssmfullaccess
+                   (ssmfullcaccess)
+```
+
+When to use which:
+* Use the `assumerole` profile **only to log in** to SSO.
+* Use the `ssmfullaccess` profile **for commands that need the extra role**.
+
+Simple use:
+
+```bash
+# 1) Log in with the SSO session
+abt sso login corp-sso
+
+# 2) Switch to the derived role profile
+abt change profile corp-br-np-ssmfullaccess
+aws sts get-caller-identity
+```
+
+If you have many `*-assumerole` profiles, repeat the second block for each one,
+keeping `source_profile` pointed to its matching base profile and the same
+`role_arn` pattern (`ssmfullcaccess`).
+
 ---
 
 ## 2) SSO login
