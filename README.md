@@ -8,6 +8,7 @@ A **Bash** toolkit that gives you a `kubectx/kubens`-style workflow for AWS:
 - Fast switching: `abt change ...` / `abt select context` (with `fzf`)
 - EC2 listing without the console: `abt list ec2`
 - SSM Session Manager connect: `abt connect ssm` / `abt select ssm`
+- SSM port forwarding to private services: `abt connect forward` / `abt select forward`
 - Corporate VPN/proxy workaround: SSM ignores proxy only during sessions
 - Utilities: `abt list profiles/regions`, `abt show identity`, `abt test doctor`, `abt sso login`
 
@@ -297,7 +298,10 @@ abt select region
 abt list ec2
 abt connect ssm i-0123456789abcdef0
 abt connect ssm -n api-01
+abt connect forward i-0123456789abcdef0 db.internal 5432
+abt connect forward -n bastion-01 db.internal 5432 15432
 abt select ssm
+abt select forward
 abt sso login
 abt test sts
 abt test sts eu-west-3 eu-central-1
@@ -311,6 +315,52 @@ Tip: `abt export context` is handy for scripts:
 ```bash
 source <(abt export context)
 ```
+
+---
+
+## 6) Port forward to private services (SSM)
+
+Use an SSM-managed instance (bastion) as a tunnel from your laptop to a private
+service (RDS, Redis, internal API, etc.). This avoids SSH and works with IAM
+Identity Center.
+
+Start a port-forward session:
+
+```bash
+# Forward local 15432 -> db.internal:5432 through a bastion
+abt connect forward -n bastion-01 db.internal 5432 15432
+
+# If local port is omitted, it defaults to the remote port
+abt connect forward i-0123456789abcdef0 db.internal 5432
+```
+
+Interactive (fzf) flow with a common DB port picker:
+
+```bash
+abt select forward
+```
+
+Then connect your client (e.g., DBeaver) to:
+
+```
+Host: 127.0.0.1
+Port: 15432   # or 5432 if you didn't override local port
+```
+
+Example: RDS (PostgreSQL)
+
+```bash
+abt connect forward -n bastion-01 mydb.abc123.eu-west-3.rds.amazonaws.com 5432 15432
+```
+
+Security group rules to make this work:
+* RDS SG inbound: allow 5432 from the bastion instance SG.
+* Bastion SG outbound: allow 5432 to the RDS SG (if egress is restricted).
+* SSM requirements: instance has SSM agent + IAM role with `AmazonSSMManagedInstanceCore`.
+
+Notes:
+* Keep the terminal open while the session is active (Ctrl+C to stop).
+* The instance must be SSM-managed and able to reach the remote host/port.
 
 ---
 
