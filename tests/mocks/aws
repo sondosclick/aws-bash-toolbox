@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log="${AWS_MOCK_LOG:-}"
+if [ -n "$log" ]; then
+  printf "%s\n" "$*" >> "$log"
+fi
+
+if [[ "$*" == *"describe-instances"* ]]; then
+  if [[ "$*" == *"ForwardHost"* ]] || [[ "$*" == *"DBHost"* ]] || [[ "$*" == *"DBEndpoint"* ]] || [[ "$*" == *"RDSEndpoint"* ]]; then
+    printf "ForwardHost\tdb.internal\n"
+    exit 0
+  fi
+
+  if [[ "$*" == *"Reservations[].Instances"* ]]; then
+    printf "i-1234567890abcdef0\tbastion-01\t10.0.0.10\trunning\n"
+    exit 0
+  fi
+fi
+
+exit 0
