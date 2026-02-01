@@ -288,8 +288,6 @@ Usage:
   abt connect ssm -n <NameTag>
   abt connect forward <instance-id> <remote-host> <remote-port> [local-port]
   abt connect forward -n <NameTag> <remote-host> <remote-port> [local-port]
-  abt connect forward <instance-id> <remote-host> <remote-port> [local-port]
-  abt connect forward -n <NameTag> <remote-host> <remote-port> [local-port]
   abt select ssm
   abt select forward
   abt sso login [session]
