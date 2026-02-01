@@ -340,6 +340,10 @@ Interactive (fzf) flow with a common DB port picker:
 abt select forward
 ```
 
+Tip: add a tag on the bastion to prefill the remote host:
+* `ForwardHost` (preferred)
+* `DBHost`, `DbHost`, `DBEndpoint`, `RDSEndpoint`, `RDSHost`, `db_host`
+
 Then connect your client (e.g., DBeaver) to:
 
 ```

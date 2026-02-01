@@ -507,6 +507,17 @@ _abt_doctor() {
 # SSM helpers (internal)
 # ----------------------------
 
+_abt_validate_port() {
+  local port="$1"
+  case "$port" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    return 1
+  fi
+  return 0
+}
+
 _abt_common_db_ports() {
   cat <<'EOF'
 postgres (5432)
@@ -523,20 +534,46 @@ EOF
 _abt_select_db_port() {
   command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
 
-  local choice port
-  choice=$( { _abt_common_db_ports; echo "custom"; } \
+  local selected_port_option port
+  selected_port_option=$( { _abt_common_db_ports; echo "custom"; } \
     | fzf --prompt="Remote port > " --reverse --height=20 )
 
-  [ -z "$choice" ] && return 1
+  [ -z "$selected_port_option" ] && return 1
 
-  if [ "$choice" = "custom" ]; then
+  if [ "$selected_port_option" = "custom" ]; then
     read -r -p "Remote port: " port
   else
-    port=$(printf "%s" "$choice" | awk -F'[()]' '{print $2}')
+    port=$(printf "%s" "$selected_port_option" | awk -F'[()]' '{print $2}')
   fi
 
   [ -z "$port" ] && { echo "Remote port required"; return 1; }
+  if ! _abt_validate_port "$port"; then
+    echo "Invalid port: $port (must be 1-65535)"
+    return 1
+  fi
   echo "$port"
+}
+
+_abt_forward_default_host() {
+  local instance_id="$1"
+  local tags key value
+
+  tags=$(_abt_cmd ec2 describe-instances \
+    --instance-ids "$instance_id" \
+    --query "Reservations[0].Instances[0].Tags[?Key=='ForwardHost' || Key=='DBHost' || Key=='DbHost' || Key=='DBEndpoint' || Key=='RDSEndpoint' || Key=='RDSHost' || Key=='db_host'].[Key,Value]" \
+    --output text 2>/dev/null)
+
+  [ -z "$tags" ] && return 1
+
+  for key in ForwardHost DBHost DbHost DBEndpoint RDSEndpoint RDSHost db_host; do
+    value=$(printf "%s\n" "$tags" | awk -v k="$key" '$1==k{print $2; exit}')
+    if [ -n "$value" ] && [ "$value" != "None" ]; then
+      echo "$value"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 # Usage:
@@ -590,8 +627,16 @@ _abt_ssm_port_forward() {
     return 1
   fi
 
+  if ! _abt_validate_port "$remote_port"; then
+    echo "Invalid remote port: $remote_port (must be 1-65535)"
+    return 1
+  fi
+
   if [ -z "$local_port" ]; then
     local_port="$remote_port"
+  elif ! _abt_validate_port "$local_port"; then
+    echo "Invalid local port: $local_port (must be 1-65535)"
+    return 1
   fi
 
   # Bypass proxy ONLY for SSM (corporate VPN fix)
@@ -621,7 +666,7 @@ _abt_ssm_select() {
 _abt_forward_select() {
   command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
 
-  local id remote_host remote_port local_port
+  local id remote_host remote_port local_port suggested_host
   id=$(_abt_cmd ec2 describe-instances \
       --query "Reservations[].Instances[].[InstanceId, Tags[?Key==\`Name\`]|[0].Value, PrivateIpAddress, State.Name]" \
       --output text \
@@ -631,10 +676,18 @@ _abt_forward_select() {
 
   [ -z "$id" ] && return 0
 
-  remote_port="$(_abt_select_db_port)" || return 1
-  read -r -p "Remote host: " remote_host
+  suggested_host="$(_abt_forward_default_host "$id")"
+  if [ -n "$suggested_host" ]; then
+    read -r -p "Remote host (default $suggested_host): " remote_host
+    if [ -z "$remote_host" ]; then
+      remote_host="$suggested_host"
+    fi
+  else
+    read -r -p "Remote host: " remote_host
+  fi
   [ -z "$remote_host" ] && { echo "Remote host required"; return 1; }
 
+  remote_port="$(_abt_select_db_port)" || return 1
   read -r -p "Local port (default $remote_port): " local_port
   _abt_ssm_port_forward "$id" "$remote_host" "$remote_port" "$local_port"
 }
