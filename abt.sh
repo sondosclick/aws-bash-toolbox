@@ -286,7 +286,10 @@ Usage:
   abt list ec2
   abt connect ssm <instance-id>
   abt connect ssm -n <NameTag>
+  abt connect forward <instance-id> <remote-host> <remote-port> [local-port]
+  abt connect forward -n <NameTag> <remote-host> <remote-port> [local-port]
   abt select ssm
+  abt select forward
   abt sso login [session]
   abt test sts [region...]
   abt test doctor
@@ -370,8 +373,14 @@ abt() {
     connect:ssm)
       _abt_ssm_connect "$@"
       ;;
+    connect:forward)
+      _abt_ssm_port_forward "$@"
+      ;;
     select:ssm)
       _abt_ssm_select
+      ;;
+    select:forward)
+      _abt_forward_select
       ;;
     sso:login)
       _abt_sso_login "$@"
@@ -498,6 +507,75 @@ _abt_doctor() {
 # SSM helpers (internal)
 # ----------------------------
 
+_abt_validate_port() {
+  local port="$1"
+  case "$port" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    return 1
+  fi
+  return 0
+}
+
+_abt_common_db_ports() {
+  cat <<'EOF'
+postgres (5432)
+mysql (3306)
+mariadb (3306)
+mssql (1433)
+oracle (1521)
+redis (6379)
+mongodb (27017)
+opensearch (9200)
+EOF
+}
+
+_abt_select_db_port() {
+  command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
+
+  local selected_port_option port
+  selected_port_option=$( { _abt_common_db_ports; echo "custom"; } \
+    | fzf --prompt="Remote port > " --reverse --height=20 )
+
+  [ -z "$selected_port_option" ] && return 1
+
+  if [ "$selected_port_option" = "custom" ]; then
+    read -r -p "Remote port: " port
+  else
+    port=$(printf "%s" "$selected_port_option" | awk -F'[()]' '{print $2}')
+  fi
+
+  [ -z "$port" ] && { echo "Remote port required"; return 1; }
+  if ! _abt_validate_port "$port"; then
+    echo "Invalid port: $port (must be 1-65535)"
+    return 1
+  fi
+  echo "$port"
+}
+
+_abt_forward_default_host() {
+  local instance_id="$1"
+  local tags key value
+
+  tags=$(_abt_cmd ec2 describe-instances \
+    --instance-ids "$instance_id" \
+    --query "Reservations[0].Instances[0].Tags[?Key=='ForwardHost' || Key=='DBHost' || Key=='DbHost' || Key=='DBEndpoint' || Key=='RDSEndpoint' || Key=='RDSHost' || Key=='db_host'].[Key,Value]" \
+    --output text 2>/dev/null)
+
+  [ -z "$tags" ] && return 1
+
+  for key in ForwardHost DBHost DbHost DBEndpoint RDSEndpoint RDSHost db_host; do
+    value=$(printf "%s\n" "$tags" | awk -v k="$key" '$1==k{print $2; exit}')
+    if [ -n "$value" ] && [ "$value" != "None" ]; then
+      echo "$value"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 # Usage:
 #   abt connect ssm i-0123...
 #   abt connect ssm -n instance-name
@@ -521,6 +599,54 @@ _abt_ssm_connect() {
     ssm start-session --target "$target"
 }
 
+# Usage:
+#   abt connect forward i-0123... db.internal 5432 [local-port]
+#   abt connect forward -n instance-name db.internal 5432 [local-port]
+_abt_ssm_port_forward() {
+  local target="" remote_host="" remote_port="" local_port=""
+
+  if [ "$1" = "-n" ]; then
+    [ -z "$2" ] && { echo "Usage: abt connect forward -n <NameTag> <remote-host> <remote-port> [local-port]"; return 1; }
+    target=$(_abt_cmd ec2 describe-instances \
+      --filters "Name=tag:Name,Values=$2" "Name=instance-state-name,Values=running" \
+      --query 'Reservations[0].Instances[0].InstanceId' \
+      --output text)
+    shift 2
+  else
+    target="$1"
+    shift 1
+  fi
+
+  remote_host="${1:-}"
+  remote_port="${2:-}"
+  local_port="${3:-}"
+
+  [ -z "$target" ] || [ "$target" = "None" ] && { echo "Instance not found"; return 2; }
+  if [ -z "$remote_host" ] || [ -z "$remote_port" ]; then
+    echo "Usage: abt connect forward <instance-id> <remote-host> <remote-port> [local-port]"
+    return 1
+  fi
+
+  if ! _abt_validate_port "$remote_port"; then
+    echo "Invalid remote port: $remote_port (must be 1-65535)"
+    return 1
+  fi
+
+  if [ -z "$local_port" ]; then
+    local_port="$remote_port"
+  elif ! _abt_validate_port "$local_port"; then
+    echo "Invalid local port: $local_port (must be 1-65535)"
+    return 1
+  fi
+
+  # Bypass proxy ONLY for SSM (corporate VPN fix)
+  env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy \
+    aws --profile "$AWS_PROFILE" --region "$AWS_REGION" \
+    ssm start-session --target "$target" \
+    --document-name AWS-StartPortForwardingSessionToRemoteHost \
+    --parameters "host=$remote_host,portNumber=$remote_port,localPortNumber=$local_port"
+}
+
 # Interactive SSM selector
 _abt_ssm_select() {
   command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
@@ -535,6 +661,35 @@ _abt_ssm_select() {
 
   [ -z "$id" ] && return 0
   _abt_ssm_connect "$id"
+}
+
+_abt_forward_select() {
+  command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
+
+  local id remote_host remote_port local_port suggested_host
+  id=$(_abt_cmd ec2 describe-instances \
+      --query "Reservations[].Instances[].[InstanceId, Tags[?Key==\`Name\`]|[0].Value, PrivateIpAddress, State.Name]" \
+      --output text \
+    | awk '$4=="running"{print $0}' \
+    | fzf --prompt="Forward (${AWS_PROFILE}@${AWS_REGION})> " \
+    | awk '{print $1}')
+
+  [ -z "$id" ] && return 0
+
+  suggested_host="$(_abt_forward_default_host "$id")"
+  if [ -n "$suggested_host" ]; then
+    read -r -p "Remote host (default $suggested_host): " remote_host
+    if [ -z "$remote_host" ]; then
+      remote_host="$suggested_host"
+    fi
+  else
+    read -r -p "Remote host: " remote_host
+  fi
+  [ -z "$remote_host" ] && { echo "Remote host required"; return 1; }
+
+  remote_port="$(_abt_select_db_port)" || return 1
+  read -r -p "Local port (default $remote_port): " local_port
+  _abt_ssm_port_forward "$id" "$remote_host" "$remote_port" "$local_port"
 }
 
 # ----------------------------
@@ -562,8 +717,8 @@ _abt_complete() {
       show)
         _abt_complete_words "context profile region identity version config" "$cur"
         ;;
-      select)
-        _abt_complete_words "context profile region ssm" "$cur"
+    select)
+        _abt_complete_words "context profile region ssm forward" "$cur"
         ;;
       change)
         _abt_complete_words "profile region context" "$cur"
@@ -575,7 +730,7 @@ _abt_complete() {
         _abt_complete_words "sts doctor" "$cur"
         ;;
       connect)
-        _abt_complete_words "ssm" "$cur"
+        _abt_complete_words "ssm forward" "$cur"
         ;;
       sso)
         _abt_complete_words "login" "$cur"

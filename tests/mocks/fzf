@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Consume stdin to avoid SIGPIPE in pipelines.
+cat >/dev/null || true
+
+responses="${FZF_MOCK_RESPONSES:-}"
+if [ -z "$responses" ]; then
+  exit 1
+fi
+
+state="${FZF_MOCK_STATE:-}"
+if [ -n "$state" ] && [ -f "$state" ]; then
+  count=$(cat "$state")
+else
+  count=0
+fi
+count=$((count + 1))
+if [ -n "$state" ]; then
+  echo "$count" > "$state"
+fi
+
+printf "%s\n" "$responses" | sed -n "${count}p"
