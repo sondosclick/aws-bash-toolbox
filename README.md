@@ -2,7 +2,7 @@
 
 Status: **alpha** (breaking changes are allowed).
 
-A **Bash** toolkit that gives you a `kubectx/kubens`-style workflow for AWS:
+A **Bash and Zsh** toolkit that gives you a `kubectx/kubens`-style workflow for AWS:
 
 - Active context: persistent `AWS_PROFILE` + `AWS_REGION`
 - Fast switching: `abt change ...` / `abt select context` (with `fzf`)
@@ -13,23 +13,34 @@ A **Bash** toolkit that gives you a `kubectx/kubens`-style workflow for AWS:
 - Utilities: `abt list profiles/regions`, `abt show identity`, `abt test doctor`, `abt sso login`
 
 This repo includes:
-- `abt.sh` -> all Bash functions (the toolbox)
-- `install.sh` -> installer (copies `abt.sh` to `~/.abt` and sources it from `~/.bashrc`)
+- `abt.sh` -> all toolbox functions (works in both Bash and Zsh)
+- `install.sh` -> installer (copies `abt.sh` to `~/.abt` and sources it from `~/.bashrc` or `~/.zshrc`)
 
 ---
 
 ## Requirements
 
-- Linux (tested on Ubuntu 24.04)
-- Bash
+- Linux (tested on Ubuntu 24.04) or macOS
+- Bash **or** Zsh (the toolbox detects the shell it is sourced from)
 - AWS CLI v2
 - IAM Identity Center (SSO) access
+
+> The single `abt.sh` works in both shells. It detects the running shell at
+> load time and uses the native mechanism for arrays, prompts, and tab
+> completion in each.
 
 Install dependencies:
 
 ```bash
+# Ubuntu / Debian
 sudo apt update
 sudo apt install -y fzf session-manager-plugin
+```
+
+```bash
+# macOS (Homebrew)
+brew install fzf
+brew install --cask session-manager-plugin
 ```
 
 Verify:
@@ -196,19 +207,25 @@ aws sts get-caller-identity --profile corp-dev-admin --region eu-west-3
 git clone https://github.com/sondosclick/aws-bash-toolbox
 cd aws-bash-toolbox
 ./install.sh
-source ~/.bashrc
+# then reload the rc file the installer reported:
+source ~/.zshrc    # zsh
+# or
+source ~/.bashrc   # bash
 ```
 
 What `install.sh` does:
 
 * copies `abt.sh` to `~/.abt/abt.sh`
-* adds a line to `~/.bashrc`:
+* detects your shell (from `$SHELL`) and adds a line to the matching rc file
+  (`~/.zshrc` for zsh, `~/.bashrc` for bash):
 
 ```bash
 source "$HOME/.abt/abt.sh"
 ```
 
-It does not overwrite your bashrc and is safe to run multiple times.
+It does not overwrite your rc file and is safe to run multiple times. The
+installer prints exactly which rc file it updated and the `source` command to
+run.
 
 ### Method B) Manual (copy/paste)
 
@@ -225,16 +242,31 @@ mkdir -p "$HOME/.abt"
 cp abt.sh "$HOME/.abt/abt.sh"
 ```
 
-3. Edit your `~/.bashrc` and add at the end:
+3. Add the source line to the rc file for your shell.
 
-```bash
-source "$HOME/.abt/abt.sh"
-```
+   For **bash**, edit `~/.bashrc`:
+
+   ```bash
+   source "$HOME/.abt/abt.sh"
+   ```
+
+   For **zsh**, edit `~/.zshrc`. To get native tab completion, make sure the
+   completion system is initialized *before* the source line:
+
+   ```zsh
+   autoload -Uz compinit && compinit
+   source "$HOME/.abt/abt.sh"
+   ```
+
+   (Most zsh setups, including Oh My Zsh, already run `compinit`. If yours does,
+   you only need the `source` line.)
 
 4. Reload:
 
 ```bash
-source ~/.bashrc
+source ~/.bashrc   # bash
+# or
+source ~/.zshrc    # zsh
 ```
 
 ---
@@ -401,8 +433,14 @@ env | grep -i proxy
 Install:
 
 ```bash
+# Ubuntu / Debian
 sudo apt update
 sudo apt install -y session-manager-plugin
+```
+
+```bash
+# macOS (Homebrew)
+brew install --cask session-manager-plugin
 ```
 
 ---
@@ -422,8 +460,10 @@ aws ssm describe-instance-information \
 
 ## Repo files
 
-* `abt.sh` -> Bash functions (toolbox)
-* `install.sh` -> installer (adds `source ...` to `~/.bashrc`)
+* `abt.sh` -> toolbox functions (dual-shell: Bash and Zsh)
+* `install.sh` -> installer (adds `source ...` to `~/.bashrc` or `~/.zshrc`)
+* `tests/run.sh` -> Bash test runner
+* `tests/run-zsh.sh` -> Zsh test runner
 * `README.md` -> documentation
 
 ---
