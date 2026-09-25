@@ -1,8 +1,31 @@
 #!/usr/bin/env bash
 # ============================================================
 # AWS Bash Toolbox - Context + EC2 + SSM helpers
-# Bash / Ubuntu
+# Dual-shell: works when sourced from bash or zsh
 # ============================================================
+
+# ----------------------------
+# Shell detection
+# ----------------------------
+# This file is meant to be *sourced* by an interactive shell, so the shell that
+# interprets it (bash or zsh) is what matters, not the shebang above. Detect it
+# once at load time and branch on _ABT_SHELL wherever the syntax diverges.
+if [ -n "${ZSH_VERSION:-}" ]; then
+  _ABT_SHELL="zsh"
+elif [ -n "${BASH_VERSION:-}" ]; then
+  _ABT_SHELL="bash"
+else
+  _ABT_SHELL="posix"
+fi
+
+# Absolute path to this script, resolved per shell.
+if [ "$_ABT_SHELL" = "zsh" ]; then
+  # In zsh, ${(%):-%x} expands to the path of the current script/source.
+  # shellcheck disable=SC2296  # zsh-only parameter expansion; only runs under zsh
+  _ABT_SOURCE="${(%):-%x}"
+else
+  _ABT_SOURCE="${BASH_SOURCE[0]:-$0}"
+fi
 
 # ----------------------------
 # Configuration
@@ -31,7 +54,13 @@ _abt_config_load
 _abt_regions_list() {
   if [ -n "${ABT_REGIONS:-}" ]; then
     local -a regions
-    read -r -a regions <<< "$ABT_REGIONS"
+    if [ "$_ABT_SHELL" = "zsh" ]; then
+      # zsh word-splits scalars only with ${=VAR}; wrap in eval so bash never
+      # parses the zsh-only syntax (bash -n would reject it otherwise).
+      eval 'regions=(${=ABT_REGIONS})'
+    else
+      read -r -a regions <<< "$ABT_REGIONS"
+    fi
     printf "%s\n" "${regions[@]}"
     return 0
   fi
@@ -507,6 +536,26 @@ _abt_doctor() {
 # SSM helpers (internal)
 # ----------------------------
 
+# Portable interactive prompt read.
+# Usage: _abt_read_prompt <varname> <prompt>
+# Reads a line from the user into the named variable, working in both bash
+# (read -r -p) and zsh (read "var?prompt").
+_abt_read_prompt() {
+  local _abt_var="$1"
+  local _abt_prompt_text="$2"
+  local _abt_reply=""
+  if [ "$_ABT_SHELL" = "zsh" ]; then
+    # zsh: `read "name?prompt"` prints the prompt and reads into `name`.
+    # Read into a fixed local, then assign indirectly to the caller's var.
+    eval 'read "_abt_reply?$_abt_prompt_text"'
+  else
+    # bash: -p prints the prompt, -r preserves backslashes.
+    read -r -p "$_abt_prompt_text" _abt_reply
+  fi
+  # Indirect assignment to the caller-named variable, valid in bash and zsh.
+  eval "$_abt_var=\$_abt_reply"
+}
+
 _abt_validate_port() {
   local port="$1"
   case "$port" in
@@ -541,7 +590,7 @@ _abt_select_db_port() {
   [ -z "$selected_port_option" ] && return 1
 
   if [ "$selected_port_option" = "custom" ]; then
-    read -r -p "Remote port: " port
+    _abt_read_prompt port "Remote port: "
   else
     port=$(printf "%s" "$selected_port_option" | awk -F'[()]' '{print $2}')
   fi
@@ -678,129 +727,183 @@ _abt_forward_select() {
 
   suggested_host="$(_abt_forward_default_host "$id")"
   if [ -n "$suggested_host" ]; then
-    read -r -p "Remote host (default $suggested_host): " remote_host
+    _abt_read_prompt remote_host "Remote host (default $suggested_host): "
     if [ -z "$remote_host" ]; then
       remote_host="$suggested_host"
     fi
   else
-    read -r -p "Remote host: " remote_host
+    _abt_read_prompt remote_host "Remote host: "
   fi
   [ -z "$remote_host" ] && { echo "Remote host required"; return 1; }
 
   remote_port="$(_abt_select_db_port)" || return 1
-  read -r -p "Local port (default $remote_port): " local_port
+  _abt_read_prompt local_port "Local port (default $remote_port): "
   _abt_ssm_port_forward "$id" "$remote_host" "$remote_port" "$local_port"
 }
 
 # ----------------------------
-# Bash completion
+# Completion (bash + zsh)
 # ----------------------------
+# Shared word lists so the bash and zsh completers stay in sync.
 
-_abt_complete_words() {
-  local words="$1"
-  local cur="$2"
-  mapfile -t COMPREPLY < <(compgen -W "$words" -- "$cur")
+# Level 1: the verbs.
+_abt_comp_verbs() {
+  echo "show change list connect select test sso export config help"
 }
 
-_abt_complete() {
-  local cur="${COMP_WORDS[COMP_CWORD]}"
-  local verb="${COMP_WORDS[1]}"
-  local obj="${COMP_WORDS[2]}"
+# Level 2: objects valid for a given verb. Echoes nothing for unknown verbs.
+_abt_comp_objects() {
+  case "$1" in
+    show)    echo "context profile region identity version config" ;;
+    select)  echo "context profile region ssm forward" ;;
+    change)  echo "profile region context" ;;
+    list)    echo "ec2 profiles regions" ;;
+    test)    echo "sts doctor" ;;
+    connect) echo "ssm forward" ;;
+    sso)     echo "login" ;;
+    export)  echo "context" ;;
+    config)  echo "init show" ;;
+    *)       echo "" ;;
+  esac
+}
 
-  if [ "$COMP_CWORD" -eq 1 ]; then
-    _abt_complete_words "show change list connect select test sso export config help" "$cur"
+# Level 3/4: argument suggestions given verb, object and the argument index
+# (3 = first arg after the object, 4 = second arg). Echoes nothing when there
+# is nothing sensible to suggest.
+_abt_comp_args() {
+  local verb="$1" obj="$2" pos="$3"
+  case "$verb:$obj" in
+    change:profile) [ "$pos" -eq 3 ] && _abt_profiles_list ;;
+    change:region)  [ "$pos" -eq 3 ] && _abt_regions_list ;;
+    change:context)
+      if [ "$pos" -eq 3 ]; then _abt_profiles_list
+      elif [ "$pos" -eq 4 ]; then _abt_regions_list
+      fi
+      ;;
+    select:profile) [ "$pos" -eq 3 ] && _abt_profiles_list ;;
+    select:region)  [ "$pos" -eq 3 ] && _abt_regions_list ;;
+    sso:login)      [ "$pos" -eq 3 ] && _abt_sso_sessions_list ;;
+    config:init)    [ "$pos" -eq 3 ] && echo "--force" ;;
+  esac
+}
+
+if [ "$_ABT_SHELL" = "zsh" ]; then
+  # ---- zsh native completion ----
+  # $words is the full command line (1-indexed), $CURRENT the cursor position.
+  _abt() {
+    local verb obj pos
+    # words and CURRENT are zsh completion specials, set by the completion
+    # system; they are not assigned here.
+    # shellcheck disable=SC2154,SC2153
+    verb="${words[2]}"
+    # shellcheck disable=SC2154
+    obj="${words[3]}"
+    # shellcheck disable=SC2153
+    pos=$((CURRENT - 1))
+
+    if [ "$CURRENT" -eq 2 ]; then
+      # shellcheck disable=SC2046
+      compadd -- $(_abt_comp_verbs)
+      return 0
+    fi
+
+    if [ "$CURRENT" -eq 3 ]; then
+      # shellcheck disable=SC2046
+      compadd -- $(_abt_comp_objects "$verb")
+      return 0
+    fi
+
+    # CURRENT >= 4 -> argument positions (pos 3 for CURRENT 4, etc.)
+    local suggestions
+    suggestions="$(_abt_comp_args "$verb" "$obj" "$pos")"
+    if [ -n "$suggestions" ]; then
+      # shellcheck disable=SC2086
+      compadd -- ${=suggestions}
+    fi
     return 0
-  fi
+  }
 
-  if [ "$COMP_CWORD" -eq 2 ]; then
-    case "$verb" in
-      show)
-        _abt_complete_words "context profile region identity version config" "$cur"
-        ;;
-    select)
-        _abt_complete_words "context profile region ssm forward" "$cur"
-        ;;
-      change)
-        _abt_complete_words "profile region context" "$cur"
-        ;;
-      list)
-        _abt_complete_words "ec2 profiles regions" "$cur"
-        ;;
-      test)
-        _abt_complete_words "sts doctor" "$cur"
-        ;;
-      connect)
-        _abt_complete_words "ssm forward" "$cur"
-        ;;
-      sso)
-        _abt_complete_words "login" "$cur"
-        ;;
-      export)
-        _abt_complete_words "context" "$cur"
-        ;;
-      config)
-        _abt_complete_words "init show" "$cur"
-        ;;
-      *)
+  # Register only if the zsh completion system is initialized (compinit loaded).
+  if whence compdef >/dev/null 2>&1; then
+    compdef _abt abt
+  fi
+else
+  # ---- bash native completion ----
+  _abt_complete_words() {
+    local words="$1"
+    local cur="$2"
+    local w
+    COMPREPLY=()
+    # Read-loop instead of mapfile so this works on Bash 3.2 (macOS default),
+    # which predates mapfile (Bash 4.0+).
+    while IFS= read -r w; do
+      [ -n "$w" ] && COMPREPLY+=("$w")
+    done < <(compgen -W "$words" -- "$cur")
+  }
+
+  _abt_complete() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local verb="${COMP_WORDS[1]}"
+    local obj="${COMP_WORDS[2]}"
+
+    if [ "$COMP_CWORD" -eq 1 ]; then
+      _abt_complete_words "$(_abt_comp_verbs)" "$cur"
+      return 0
+    fi
+
+    if [ "$COMP_CWORD" -eq 2 ]; then
+      local objs
+      objs="$(_abt_comp_objects "$verb")"
+      if [ -n "$objs" ]; then
+        _abt_complete_words "$objs" "$cur"
+      else
         COMPREPLY=()
-        ;;
-    esac
-    return 0
-  fi
-
-  if [ "$verb" = "change" ] && [ "$obj" = "profile" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    _abt_complete_words "$(_abt_profiles_list)" "$cur"
-    return 0
-  fi
-
-  if [ "$verb" = "change" ] && [ "$obj" = "region" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    _abt_complete_words "$(_abt_regions_list)" "$cur"
-    return 0
-  fi
-
-  if [ "$verb" = "change" ] && [ "$obj" = "context" ]; then
-    if [ "$COMP_CWORD" -eq 3 ]; then
-      _abt_complete_words "$(_abt_profiles_list)" "$cur"
+      fi
       return 0
     fi
-    if [ "$COMP_CWORD" -eq 4 ]; then
-      _abt_complete_words "$(_abt_regions_list)" "$cur"
-      return 0
+
+    # COMP_CWORD >= 3 -> argument positions.
+    local suggestions
+    suggestions="$(_abt_comp_args "$verb" "$obj" "$COMP_CWORD")"
+    if [ -n "$suggestions" ]; then
+      _abt_complete_words "$suggestions" "$cur"
+    else
+      COMPREPLY=()
     fi
-  fi
-
-  if [ "$verb" = "select" ] && [ "$obj" = "profile" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    _abt_complete_words "$(_abt_profiles_list)" "$cur"
     return 0
-  fi
-
-  if [ "$verb" = "select" ] && [ "$obj" = "region" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    _abt_complete_words "$(_abt_regions_list)" "$cur"
-    return 0
-  fi
-
-  if [ "$verb" = "sso" ] && [ "$obj" = "login" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    _abt_complete_words "$(_abt_sso_sessions_list)" "$cur"
-    return 0
-  fi
-
-  if [ "$verb" = "config" ] && [ "$obj" = "init" ] && [ "$COMP_CWORD" -eq 3 ]; then
-    _abt_complete_words "--force" "$cur"
-    return 0
-  fi
-}
-complete -F _abt_complete abt
+  }
+  complete -F _abt_complete abt
+fi
 
 # ----------------------------
 # Prompt (optional)
 # ----------------------------
 
 _abt_prompt() {
-  echo -n "[aws:${AWS_PROFILE}@${AWS_REGION}]"
+  printf '[aws:%s@%s]' "${AWS_PROFILE}" "${AWS_REGION}"
 }
 
-if [[ "$PS1" != *"aws:"* ]]; then
-  PS1='$( _abt_prompt ) '"$PS1"
+if [ "$_ABT_SHELL" = "zsh" ]; then
+  # zsh: PROMPT_SUBST re-evaluates $(...) on every prompt render. Inject once.
+  # Guard on the _abt_prompt call itself (the "aws:" text only appears at
+  # render time, so guarding on it would double-inject on re-source).
+  case "${PROMPT:-}" in
+    *"_abt_prompt"*) : ;;  # already injected
+    *)
+      setopt PROMPT_SUBST
+      # Single quotes are intentional: PROMPT_SUBST re-evaluates $(_abt_prompt)
+      # on every prompt render.
+      # shellcheck disable=SC2016
+      PROMPT='$(_abt_prompt) '"${PROMPT:-}"
+      ;;
+  esac
+elif [ "$_ABT_SHELL" = "bash" ]; then
+  case "${PS1:-}" in
+    *"_abt_prompt"*) : ;;  # already injected
+    *)
+      PS1='$( _abt_prompt ) '"${PS1:-}"
+      ;;
+  esac
 fi
 
 # ----------------------------

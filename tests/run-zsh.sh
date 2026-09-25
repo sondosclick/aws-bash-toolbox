@@ -1,8 +1,15 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env zsh
+# ============================================================
+# zsh test runner for aws-bash-toolbox
+# Mirrors tests/run.sh but sources and exercises abt.sh under zsh,
+# validating the dual-shell (zsh) code paths.
+# ============================================================
+emulate -L zsh
+set -e
+set -u
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-REPO_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+ROOT_DIR="${0:A:h}"
+REPO_ROOT="${ROOT_DIR:h}"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -18,7 +25,7 @@ EOF
 export ABT_DEFAULT_PROFILE="test"
 export ABT_DEFAULT_REGION="us-east-1"
 export ABT_COLOR=0
-export PS1=""
+export PROMPT=""
 
 export PATH="$REPO_ROOT/tests/mocks:$PATH"
 export AWS_MOCK_LOG="$TMP_DIR/aws.log"
@@ -67,7 +74,20 @@ reset_fzf() {
   : > "$FZF_MOCK_STATE"
 }
 
-echo "Running tests..."
+echo "Running zsh tests..."
+
+echo "- shell detection"
+assert_eq "zsh" "$_ABT_SHELL"
+
+echo "- regions split (custom)"
+run_cmd sh -c 'true'  # noop to reset
+ABT_REGIONS="eu-west-1 us-east-1 eu-central-1"
+run_cmd _abt_regions_list
+assert_eq 0 "$RUN_STATUS"
+assert_eq "eu-west-1
+us-east-1
+eu-central-1" "$RUN_OUT"
+unset ABT_REGIONS
 
 echo "- validate port"
 _abt_validate_port 1 || fail "port 1 should be valid"
@@ -107,9 +127,9 @@ echo "- ssm port forward (invalid port)"
 reset_log
 set +e
 _abt_ssm_port_forward "i-1234567890abcdef0" "db.internal" "70000"
-status=$?
+rc=$?
 set -e
-[ "$status" -ne 0 ] || fail "invalid port should fail"
+[ "$rc" -ne 0 ] || fail "invalid port should fail"
 if [ -s "$AWS_MOCK_LOG" ]; then
   fail "aws should not be called when validation fails"
 fi
@@ -130,4 +150,12 @@ grep -q "host=db.internal" "$AWS_MOCK_LOG" \
 grep -q "localPortNumber=15432" "$AWS_MOCK_LOG" \
   || fail "forward select did not use provided local port"
 
-echo "All tests passed."
+echo "- zsh completion registered"
+autoload -Uz compinit && compinit -u >/dev/null 2>&1
+if whence compdef >/dev/null 2>&1; then
+  # Re-source so compdef registration runs now that compinit is loaded.
+  source "$REPO_ROOT/abt.sh"
+  [ "${_comps[abt]:-}" = "_abt" ] || fail "abt completion not registered (_comps[abt]=${_comps[abt]:-<none>})"
+fi
+
+echo "All zsh tests passed."
